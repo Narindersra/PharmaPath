@@ -18,6 +18,10 @@ export interface IUser extends Document {
   open24Hours?: boolean;
   closingTime?: string;
   rating?: number;
+  location?: {
+    type: 'Point';
+    coordinates: [number, number]; // [longitude, latitude]
+  };
   createdAt: Date;
   updatedAt: Date;
   comparePassword(candidatePassword: string): Promise<boolean>;
@@ -97,11 +101,24 @@ const userSchema = new Schema<IUser, IUserModel>(
       type: Number,
       default: 4.8,
     },
+    location: {
+      type: {
+        type: String,
+        enum: ['Point'],
+        default: 'Point',
+      },
+      coordinates: {
+        type: [Number], // [longitude, latitude]
+        default: [77.2090, 28.6139],
+      },
+    },
   },
   {
     timestamps: true,
   }
 );
+
+userSchema.index({ location: '2dsphere' });
 
 // Pre-save hook to hash password with bcryptjs
 userSchema.pre('save', async function () {
