@@ -32,3 +32,8 @@ Thumbs.db
 
 # Vercel
 .vercel/
+
+# Temporary design extracts
+Stitch/
+stitch_extracted/
+zip_extracted/

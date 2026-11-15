@@ -1,6 +1,13 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { motion, useReducedMotion } from 'motion/react';
+import { gsap } from 'gsap';
+import { ScrollTrigger } from 'gsap/ScrollTrigger';
 import { Navbar } from '../../components/layout/Navbar';
 import { Footer } from '../../components/layout/Footer';
+import { useScrollReveal } from '../../hooks/useScrollReveal';
+
+gsap.registerPlugin(ScrollTrigger);
 
 const POPULAR_SEARCHES = [
   'Dolo 650',
@@ -12,8 +19,10 @@ const POPULAR_SEARCHES = [
 ];
 
 export const LandingPage: React.FC = () => {
+  const navigate = useNavigate();
+  const shouldReduceMotion = useReducedMotion();
   const [medicineQuery, setMedicineQuery] = useState('');
-  const [locationQuery, setLocationQuery] = useState('Bengaluru, Karnataka');
+  const [locationQuery, setLocationQuery] = useState('');
   const [selectedRadius, setSelectedRadius] = useState('3 km');
   const [timeLeft, setTimeLeft] = useState({ hours: 1, minutes: 59, seconds: 42 });
 
@@ -34,15 +43,224 @@ export const LandingPage: React.FC = () => {
   const handleTagClick = (tag: string, e: React.MouseEvent) => {
     e.preventDefault();
     setMedicineQuery(tag);
+    navigate(`/search?q=${encodeURIComponent(tag)}`);
   };
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    console.log('Searching for:', medicineQuery, 'in', locationQuery);
+    navigate(`/search?q=${encodeURIComponent(medicineQuery.trim())}`);
   };
 
+  // GSAP Animations with memory-safe Context & ScrollTrigger cleanup
+  const containerRef = useScrollReveal<HTMLDivElement>(
+    () => {
+      // 1. HERO ENTRANCE MASK REVEAL TIMELINE
+      const heroTl = gsap.timeline({ defaults: { ease: 'power4.out' } });
+
+      heroTl
+        .fromTo(
+          '.hero-reveal-line',
+          { yPercent: 120, opacity: 0, rotate: 1 },
+          { yPercent: 0, opacity: 1, rotate: 0, duration: 1.15, stagger: 0.12 }
+        )
+        .fromTo(
+          '.hero-subtext',
+          { y: 22, opacity: 0 },
+          { y: 0, opacity: 1, duration: 0.8 },
+          '-=0.65'
+        )
+        .fromTo(
+          '.hero-search-card',
+          { y: 32, opacity: 0, scale: 0.98 },
+          { y: 0, opacity: 1, scale: 1, duration: 0.85, ease: 'back.out(1.2)' },
+          '-=0.5'
+        )
+        .fromTo(
+          '.hero-popular-tags',
+          { y: 16, opacity: 0 },
+          { y: 0, opacity: 1, duration: 0.6 },
+          '-=0.45'
+        );
+
+      // 2. HERO PARALLAX ON SCROLL
+      gsap.to('.hero-content-wrapper', {
+        scrollTrigger: {
+          trigger: '.hero-section',
+          start: 'top top',
+          end: 'bottom top',
+          scrub: 1,
+        },
+        y: 60,
+        opacity: 0.75,
+        ease: 'none',
+      });
+
+      gsap.to('.hero-ambient-glow', {
+        scrollTrigger: {
+          trigger: '.hero-section',
+          start: 'top top',
+          end: 'bottom top',
+          scrub: 1.5,
+        },
+        y: 110,
+        scale: 1.18,
+        opacity: 0.35,
+        ease: 'none',
+      });
+
+      // 3. EDITORIAL METRICS NUMERICAL REVEAL & COUNT-UP
+      const stat1Obj = { val: 0 };
+      const stat2Obj = { val: 0 };
+      const stat3Obj = { val: 0 };
+      const stat4Obj = { val: 0 };
+
+      const stat1El = document.getElementById('stat-chemists');
+      const stat2El = document.getElementById('stat-refresh');
+      const stat3El = document.getElementById('stat-fulfillment');
+      const stat4El = document.getElementById('stat-savings');
+
+      ScrollTrigger.create({
+        trigger: '.metrics-section',
+        start: 'top 85%',
+        once: true,
+        onEnter: () => {
+          if (stat1El) {
+            gsap.to(stat1Obj, {
+              val: 18500,
+              duration: 2.1,
+              ease: 'power2.out',
+              onUpdate: () => {
+                stat1El.textContent = `${Math.floor(stat1Obj.val).toLocaleString('en-IN')}+`;
+              },
+            });
+          }
+          if (stat2El) {
+            gsap.to(stat2Obj, {
+              val: 60,
+              duration: 1.6,
+              ease: 'power2.out',
+              onUpdate: () => {
+                stat2El.textContent = `Under ${Math.floor(stat2Obj.val)}s`;
+              },
+            });
+          }
+          if (stat3El) {
+            gsap.to(stat3Obj, {
+              val: 99.4,
+              duration: 2.1,
+              ease: 'power2.out',
+              onUpdate: () => {
+                stat3El.textContent = `${stat3Obj.val.toFixed(1)}%`;
+              },
+            });
+          }
+          if (stat4El) {
+            gsap.to(stat4Obj, {
+              val: 450,
+              duration: 1.8,
+              ease: 'power2.out',
+              onUpdate: () => {
+                stat4El.textContent = `₹${Math.floor(stat4Obj.val)} / Rx`;
+              },
+            });
+          }
+        },
+      });
+
+      gsap.fromTo(
+        '.metric-item',
+        { opacity: 0, y: 30 },
+        {
+          opacity: 1,
+          y: 0,
+          duration: 0.8,
+          stagger: 0.1,
+          ease: 'power3.out',
+          scrollTrigger: {
+            trigger: '.metrics-section',
+            start: 'top 85%',
+          },
+        }
+      );
+
+      // 4. 3-STEP FLOW STAGGER REVEAL
+      gsap.fromTo(
+        '.step-card',
+        { opacity: 0, y: 35 },
+        {
+          opacity: 1,
+          y: 0,
+          duration: 0.85,
+          stagger: 0.15,
+          ease: 'power3.out',
+          scrollTrigger: {
+            trigger: '#how-it-works',
+            start: 'top 80%',
+          },
+        }
+      );
+
+      // 5. BENTO GRID CARDS STAGGER REVEAL
+      gsap.fromTo(
+        '.bento-card',
+        { opacity: 0, y: 40 },
+        {
+          opacity: 1,
+          y: 0,
+          duration: 0.9,
+          stagger: 0.15,
+          ease: 'power3.out',
+          scrollTrigger: {
+            trigger: '#features',
+            start: 'top 75%',
+          },
+        }
+      );
+
+      // 6. UI MOCKUPS SCALE-DOWN & PARALLAX
+      gsap.utils.toArray<HTMLElement>('.ui-mockup-scale').forEach((el) => {
+        gsap.fromTo(
+          el,
+          { scale: 1.06, y: 15 },
+          {
+            scale: 1,
+            y: 0,
+            ease: 'power2.out',
+            scrollTrigger: {
+              trigger: el,
+              start: 'top 92%',
+              end: 'top 45%',
+              scrub: 1.2,
+            },
+          }
+        );
+      });
+
+      // 7. PHARMACY PARTNER BANNER REVEAL
+      gsap.fromTo(
+        '.partner-banner',
+        { opacity: 0, y: 40, scale: 0.98 },
+        {
+          opacity: 1,
+          y: 0,
+          scale: 1,
+          duration: 0.9,
+          ease: 'power3.out',
+          scrollTrigger: {
+            trigger: '#pharmacy-partner',
+            start: 'top 82%',
+          },
+        }
+      );
+    },
+    { reducedMotion: Boolean(shouldReduceMotion) }
+  );
+
   return (
-    <div className="font-sans text-[15px] text-slate-muted antialiased relative min-h-screen selection:bg-primary/10 selection:text-primary flex flex-col">
+    <div
+      ref={containerRef}
+      className="font-sans text-[15px] text-slate-muted antialiased relative min-h-screen selection:bg-primary/10 selection:text-primary flex flex-col"
+    >
       {/* NAVBAR */}
       <Navbar />
 
@@ -51,23 +269,42 @@ export const LandingPage: React.FC = () => {
         <div className="flex flex-col w-full relative">
 
           {/* =========================================================================
-                 1. HERO SECTION: Monumental Typography & Clinical Precision
+                 1. HERO SECTION: Monumental Mask Typography & Clinical Precision
                  ========================================================================= */}
-          <section className="relative pt-8 pb-16 md:pt-16 md:pb-24 overflow-visible">
-            <div className="max-w-4xl mx-auto flex flex-col items-center text-center relative z-10">
+          <section className="hero-section relative pt-8 pb-16 md:pt-16 md:pb-24 overflow-visible">
+            {/* Ambient Radial Gradient Glow with Parallax */}
+            <div
+              className="hero-ambient-glow absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[650px] sm:w-[900px] md:w-[1100px] h-[360px] sm:h-[480px] pointer-events-none -z-0 opacity-80 will-change-transform"
+              style={{
+                background:
+                  'radial-gradient(ellipse 65% 55% at 50% 45%, rgba(13, 148, 136, 0.18) 0%, rgba(45, 212, 191, 0.10) 35%, rgba(204, 251, 241, 0.05) 55%, transparent 75%)',
+                filter: 'blur(35px)',
+              }}
+            />
+
+            <div className="hero-content-wrapper max-w-4xl mx-auto flex flex-col items-center text-center relative z-10 will-change-transform">
+              {/* Masked Typography Reveal */}
               <h1 className="font-display text-4xl sm:text-5xl md:text-6xl tracking-tight text-slate-charcoal font-extrabold max-w-4xl leading-[1.12]">
-                Find your medicine.
-                <br />
-                <span className="text-primary inline-block">Skip the pharmacy hunt.</span>
+                <span className="block overflow-hidden py-1">
+                  <span className="hero-reveal-line inline-block">
+                    Find your medicine.
+                  </span>
+                </span>
+                <span className="block overflow-hidden py-1">
+                  <span className="hero-reveal-line inline-block bg-gradient-to-r from-[#005c55] via-[#0d7a68] to-[#14b8a6] bg-clip-text text-transparent">
+                    Skip the pharmacy hunt.
+                  </span>
+                </span>
               </h1>
-              <p className="text-base sm:text-lg text-slate-subtle max-w-2xl mt-5 leading-relaxed">
+
+              <p className="hero-subtext text-base sm:text-lg text-slate-subtle max-w-2xl mt-5 leading-relaxed">
                 Check real-time stock at verified pharmacies near you, compare prescription prices, and hold your medication for instant pickup.
               </p>
 
               {/* Search Bar Card */}
               <form
                 onSubmit={handleSearchSubmit}
-                className="w-full max-w-3xl mt-9 bg-surface-card rounded-xl p-2 border border-border-soft shadow-panel flex flex-col md:flex-row items-center gap-2"
+                className="hero-search-card w-full max-w-3xl mt-9 bg-surface-card rounded-xl p-2 border border-border-soft shadow-panel flex flex-col md:flex-row items-center gap-2 will-change-transform"
               >
                 <div className="flex items-center gap-2.5 flex-1 w-full px-4 py-3 rounded-lg bg-surface-elevated border border-border-soft/60 focus-within:border-primary focus-within:bg-white transition-all">
                   <span className="material-symbols-outlined text-primary text-[20px]">search</span>
@@ -93,7 +330,7 @@ export const LandingPage: React.FC = () => {
 
                 <button
                   type="submit"
-                  className="w-full md:w-auto text-[14px] font-semibold px-6 py-3 rounded-lg bg-primary text-white hover:bg-primary-hover shadow-subtle transition-all flex items-center justify-center gap-2 whitespace-nowrap cursor-pointer"
+                  className="w-full md:w-auto text-[14px] font-semibold px-6 py-3 rounded-lg bg-gradient-to-r from-[#005c55] to-[#0d7a68] hover:from-[#084e49] hover:to-[#0b6b5b] text-white shadow-subtle transition-all flex items-center justify-center gap-2 whitespace-nowrap cursor-pointer active:scale-[0.98]"
                 >
                   <span className="material-symbols-outlined text-[18px]">search</span>
                   <span>Search</span>
@@ -101,17 +338,19 @@ export const LandingPage: React.FC = () => {
               </form>
 
               {/* Popular Searches */}
-              <div className="flex flex-wrap items-center justify-center gap-2 mt-4 text-slate-subtle text-[13px]">
+              <div className="hero-popular-tags flex flex-wrap items-center justify-center gap-2 mt-4 text-slate-subtle text-[13px]">
                 <span className="text-slate-subtle font-medium">Popular:</span>
                 {POPULAR_SEARCHES.map((term) => (
-                  <button
+                  <motion.button
                     key={term}
+                    whileHover={shouldReduceMotion ? undefined : { y: -1 }}
+                    whileTap={shouldReduceMotion ? undefined : { scale: 0.96 }}
                     type="button"
                     onClick={(e) => handleTagClick(term, e)}
                     className="px-2.5 py-1 rounded-md bg-surface-card border border-border-soft hover:border-border-strong text-slate-charcoal text-[12px] font-medium transition-colors cursor-pointer"
                   >
                     {term}
-                  </button>
+                  </motion.button>
                 ))}
               </div>
             </div>
@@ -120,14 +359,17 @@ export const LandingPage: React.FC = () => {
           {/* =========================================================================
                  2. EDITORIAL METRICS STRIP: High Precision Telemetry At A Glance
                  ========================================================================= */}
-          <section className="w-full mx-auto my-6">
+          <section className="metrics-section w-full mx-auto my-6">
             <div className="grid grid-cols-2 md:grid-cols-4 gap-6 bg-surface-card p-6 md:p-8 rounded-xl shadow-subtle border border-border-soft divide-y md:divide-y-0 md:divide-x divide-border-soft">
               
-              <div className="flex flex-col gap-1.5 md:pr-4 pt-3 md:pt-0">
+              <div className="metric-item flex flex-col gap-1.5 md:pr-4 pt-3 md:pt-0">
                 <span className="text-[11px] font-mono uppercase tracking-wider text-slate-subtle">
                   Verified Chemists &amp; Pharmacies
                 </span>
-                <span className="font-display text-2xl md:text-3xl font-extrabold text-slate-charcoal tracking-tight font-mono">
+                <span
+                  id="stat-chemists"
+                  className="font-display text-2xl md:text-3xl font-extrabold text-slate-charcoal tracking-tight font-mono"
+                >
                   18,500+
                 </span>
                 <span className="text-[13px] text-slate-subtle leading-tight">
@@ -135,11 +377,14 @@ export const LandingPage: React.FC = () => {
                 </span>
               </div>
 
-              <div className="flex flex-col gap-1.5 md:px-4 pt-3 md:pt-0">
+              <div className="metric-item flex flex-col gap-1.5 md:px-4 pt-3 md:pt-0">
                 <span className="text-[11px] font-mono uppercase tracking-wider text-slate-subtle">
                   Inventory Refresh
                 </span>
-                <span className="font-display text-2xl md:text-3xl font-extrabold text-slate-charcoal tracking-tight font-mono">
+                <span
+                  id="stat-refresh"
+                  className="font-display text-2xl md:text-3xl font-extrabold text-slate-charcoal tracking-tight font-mono"
+                >
                   Under 60s
                 </span>
                 <span className="text-[13px] text-slate-subtle leading-tight">
@@ -147,11 +392,14 @@ export const LandingPage: React.FC = () => {
                 </span>
               </div>
 
-              <div className="flex flex-col gap-1.5 md:px-4 pt-3 md:pt-0">
+              <div className="metric-item flex flex-col gap-1.5 md:px-4 pt-3 md:pt-0">
                 <span className="text-[11px] font-mono uppercase tracking-wider text-slate-subtle">
                   Order Fulfillment Rate
                 </span>
-                <span className="font-display text-2xl md:text-3xl font-extrabold text-slate-charcoal tracking-tight font-mono">
+                <span
+                  id="stat-fulfillment"
+                  className="font-display text-2xl md:text-3xl font-extrabold text-slate-charcoal tracking-tight font-mono"
+                >
                   99.4%
                 </span>
                 <span className="text-[13px] text-slate-subtle leading-tight">
@@ -159,11 +407,14 @@ export const LandingPage: React.FC = () => {
                 </span>
               </div>
 
-              <div className="flex flex-col gap-1.5 md:pl-4 pt-3 md:pt-0">
+              <div className="metric-item flex flex-col gap-1.5 md:pl-4 pt-3 md:pt-0">
                 <span className="text-[11px] font-mono uppercase tracking-wider text-slate-subtle">
                   Avg. Patient Savings
                 </span>
-                <span className="font-display text-2xl md:text-3xl text-primary font-bold tracking-tight font-mono">
+                <span
+                  id="stat-savings"
+                  className="font-display text-2xl md:text-3xl text-primary font-bold tracking-tight font-mono"
+                >
                   ₹450 / Rx
                 </span>
                 <span className="text-[13px] text-slate-subtle leading-tight">
@@ -193,7 +444,7 @@ export const LandingPage: React.FC = () => {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               
               {/* STEP // 01 */}
-              <div className="bg-surface-card p-6 rounded-xl border border-border-soft shadow-subtle flex flex-col justify-between hover:border-border-strong transition-all duration-200">
+              <div className="step-card bg-surface-card p-6 rounded-xl border border-border-soft shadow-subtle flex flex-col justify-between hover:border-border-strong transition-all duration-200">
                 <div className="flex flex-col gap-3">
                   <div className="flex items-center justify-between pb-3 border-b border-border-soft">
                     <span className="font-mono text-xs font-semibold text-slate-subtle tracking-wider">
@@ -217,7 +468,7 @@ export const LandingPage: React.FC = () => {
               </div>
 
               {/* STEP // 02 */}
-              <div className="bg-surface-card p-6 rounded-xl border border-border-soft shadow-subtle flex flex-col justify-between hover:border-border-strong transition-all duration-200">
+              <div className="step-card bg-surface-card p-6 rounded-xl border border-border-soft shadow-subtle flex flex-col justify-between hover:border-border-strong transition-all duration-200">
                 <div className="flex flex-col gap-3">
                   <div className="flex items-center justify-between pb-3 border-b border-border-soft">
                     <span className="font-mono text-xs font-semibold text-slate-subtle tracking-wider">
@@ -241,7 +492,7 @@ export const LandingPage: React.FC = () => {
               </div>
 
               {/* STEP // 03 */}
-              <div className="bg-surface-card p-6 rounded-xl border border-border-soft shadow-subtle flex flex-col justify-between hover:border-border-strong transition-all duration-200">
+              <div className="step-card bg-surface-card p-6 rounded-xl border border-border-soft shadow-subtle flex flex-col justify-between hover:border-border-strong transition-all duration-200">
                 <div className="flex flex-col gap-3">
                   <div className="flex items-center justify-between pb-3 border-b border-border-soft">
                     <span className="font-mono text-xs font-semibold text-slate-subtle tracking-wider">
@@ -288,7 +539,7 @@ export const LandingPage: React.FC = () => {
             <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
               
               {/* BOX 1: Live Spatial Node Tracking (Span 7) */}
-              <div className="md:col-span-7 bg-surface-card rounded-xl p-6 border border-border-soft shadow-subtle flex flex-col justify-between">
+              <div className="bento-card md:col-span-7 bg-surface-card rounded-xl p-6 border border-border-soft shadow-subtle flex flex-col justify-between">
                 <div>
                   <div className="flex items-center justify-between mb-3">
                     <span className="text-[11px] font-mono uppercase tracking-wider px-2.5 py-1 rounded bg-surface-muted border border-border-soft text-slate-charcoal font-medium">
@@ -307,8 +558,8 @@ export const LandingPage: React.FC = () => {
                   </p>
                 </div>
 
-                {/* Real Node Cards */}
-                <div className="my-5 flex flex-col gap-2.5">
+                {/* Real Node Cards UI Mockup */}
+                <div className="ui-mockup-scale my-5 flex flex-col gap-2.5 will-change-transform">
                   {/* Apollo */}
                   <div className="flex items-center justify-between p-3 rounded-lg border border-border-soft bg-surface-elevated hover:bg-white hover:border-border-strong transition-all">
                     <div className="flex items-center gap-3">
@@ -402,7 +653,7 @@ export const LandingPage: React.FC = () => {
               </div>
 
               {/* BOX 2: Digital Hold Protocol (Span 5) */}
-              <div className="md:col-span-5 bg-surface-card rounded-xl p-6 border border-border-soft shadow-subtle flex flex-col justify-between">
+              <div className="bento-card md:col-span-5 bg-surface-card rounded-xl p-6 border border-border-soft shadow-subtle flex flex-col justify-between">
                 <div>
                   <div className="flex items-center justify-between mb-3">
                     <span className="text-[11px] font-mono uppercase tracking-wider px-2.5 py-1 rounded bg-primary-subtle text-primary border border-primary-border font-medium">
@@ -418,8 +669,8 @@ export const LandingPage: React.FC = () => {
                   </p>
                 </div>
 
-                {/* Countdown Card */}
-                <div className="bg-surface-elevated rounded-lg p-4 my-4 border border-border-soft flex flex-col gap-2">
+                {/* Countdown Card UI Mockup */}
+                <div className="ui-mockup-scale bg-surface-elevated rounded-lg p-4 my-4 border border-border-soft flex flex-col gap-2 will-change-transform">
                   <div className="flex items-center justify-between text-slate-subtle font-mono text-[11px]">
                     <span>HOLD EXPIRES IN</span>
                     <span className="text-primary font-semibold">GUARANTEED HOLD</span>
@@ -443,7 +694,7 @@ export const LandingPage: React.FC = () => {
               </div>
 
               {/* BOX 3: Bio-Equivalent Match (Span 5) */}
-              <div className="md:col-span-5 bg-surface-card rounded-xl p-6 border border-border-soft shadow-subtle flex flex-col justify-between">
+              <div className="bento-card md:col-span-5 bg-surface-card rounded-xl p-6 border border-border-soft shadow-subtle flex flex-col justify-between">
                 <div>
                   <div className="flex items-center justify-between mb-3">
                     <span className="text-[11px] font-mono uppercase tracking-wider px-2.5 py-1 rounded bg-surface-muted text-slate-charcoal border border-border-soft font-medium">
@@ -459,8 +710,8 @@ export const LandingPage: React.FC = () => {
                   </p>
                 </div>
 
-                {/* Price Comparison Widget */}
-                <div className="bg-surface-elevated rounded-lg p-4 my-4 border border-border-soft flex flex-col gap-3">
+                {/* Price Comparison Widget UI Mockup */}
+                <div className="ui-mockup-scale bg-surface-elevated rounded-lg p-4 my-4 border border-border-soft flex flex-col gap-3 will-change-transform">
                   <div className="flex items-center justify-between">
                     <div className="flex flex-col">
                       <span className="text-[12px] text-slate-subtle">Brand Name MRP</span>
@@ -484,7 +735,7 @@ export const LandingPage: React.FC = () => {
               </div>
 
               {/* BOX 4: Wide Partner Network & Security (Span 7) */}
-              <div className="md:col-span-7 bg-surface-card rounded-xl p-6 border border-border-soft shadow-subtle flex flex-col justify-between">
+              <div className="bento-card md:col-span-7 bg-surface-card rounded-xl p-6 border border-border-soft shadow-subtle flex flex-col justify-between">
                 <div>
                   <div className="flex items-center gap-2 mb-3">
                     <span className="w-2 h-2 rounded-full bg-primary"></span>
@@ -516,7 +767,8 @@ export const LandingPage: React.FC = () => {
                     </div>
                   </div>
 
-                  <div className="bg-surface-elevated p-4 rounded-lg border border-border-soft flex flex-col items-center justify-center text-center w-full sm:w-auto sm:min-w-[170px]">
+                  {/* Telemetry Mockup Card */}
+                  <div className="ui-mockup-scale bg-surface-elevated p-4 rounded-lg border border-border-soft flex flex-col items-center justify-center text-center w-full sm:w-auto sm:min-w-[170px] will-change-transform">
                     <span className="font-mono text-[11px] text-slate-subtle uppercase tracking-wider">
                       Telemetry Latency
                     </span>
@@ -538,7 +790,7 @@ export const LandingPage: React.FC = () => {
                  5. PHARMACY PARTNER CALLOUT BANNER
                  ========================================================================= */}
           <section id="pharmacy-partner" className="w-full mx-auto my-16">
-            <div className="bg-surface-card border border-border-soft rounded-xl p-8 md:p-10 shadow-subtle flex flex-col md:flex-row items-center justify-between gap-8">
+            <div className="partner-banner bg-surface-card border border-border-soft rounded-xl p-8 md:p-10 shadow-subtle flex flex-col md:flex-row items-center justify-between gap-8 will-change-transform">
               <div className="flex flex-col gap-2.5 max-w-xl">
                 <div className="inline-flex items-center gap-2">
                   <span className="w-2 h-2 rounded-full bg-primary"></span>

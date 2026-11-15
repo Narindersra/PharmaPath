@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
+import { motion, useReducedMotion } from 'motion/react';
 import {
   User,
   Store,
@@ -7,24 +8,45 @@ import {
   Eye,
   EyeOff,
   ArrowRight,
-  AtSign
+  AtSign,
+  AlertCircle
 } from 'lucide-react';
+import { useAuth } from '../../context/AuthContext';
+import { Button } from '../../components/ui/Button';
 
 export const LoginPage: React.FC = () => {
   const navigate = useNavigate();
+  const shouldReduceMotion = useReducedMotion();
+  const { login, loading, error: authError, clearError } = useAuth();
   const [role, setRole] = useState<'customer' | 'pharmacy'>('customer');
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(true);
+  const [formError, setFormError] = useState<string | null>(null);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    console.log('Logging in as:', role, { identifier, rememberMe });
-    if (role === 'pharmacy') {
-      navigate('/pharmacy/dashboard');
-    } else {
-      navigate('/dashboard');
+    setFormError(null);
+    clearError();
+
+    if (!identifier.trim()) {
+      setFormError('Please enter your email or identifier');
+      return;
+    }
+    if (!password) {
+      setFormError('Please enter your password');
+      return;
+    }
+
+    try {
+      await login(identifier.trim(), password);
+    } catch (err: unknown) {
+      if (err instanceof Error) {
+        setFormError(err.message);
+      } else {
+        setFormError('Invalid credentials. Please try again.');
+      }
     }
   };
 
@@ -61,9 +83,14 @@ export const LoginPage: React.FC = () => {
         </div>
       </header>
 
-      {/* Main Single Centered Auth Card */}
+      {/* Main Single Centered Auth Card with Page Transition */}
       <main className="w-full flex-1 flex items-center justify-center px-4 py-8">
-        <div className="w-full max-w-[440px] bg-white rounded-2xl border border-border-soft shadow-lg p-6 sm:p-8 space-y-5 relative">
+        <motion.div
+          initial={shouldReduceMotion ? { opacity: 0 } : { opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.35, ease: 'easeOut' }}
+          className="w-full max-w-[440px] bg-white rounded-2xl border border-border-soft shadow-lg p-6 sm:p-8 space-y-5 relative"
+        >
           
           {/* Header with Logo + Status Dot */}
           <div className="text-center space-y-2">
@@ -82,31 +109,69 @@ export const LoginPage: React.FC = () => {
             </p>
           </div>
 
-          {/* Role Switcher Tabs */}
-          <div className="p-1 rounded-xl bg-surface-container flex items-center gap-1">
+          {/* Animated Role Switcher Tabs */}
+          <div className="p-1 rounded-xl bg-surface-container flex items-center gap-1 relative">
             <button
               type="button"
               onClick={() => setRole('customer')}
-              className={`flex-1 py-2 px-3 rounded-lg text-xs font-semibold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
-                role === 'customer'
-                  ? 'bg-white text-slate-charcoal shadow-xs'
-                  : 'text-slate-muted hover:text-slate-charcoal'
-              }`}
+              className="flex-1 py-2 px-3 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer relative z-10 transition-colors"
             >
-              <User className={`w-3.5 h-3.5 ${role === 'customer' ? 'text-primary' : 'text-slate-subtle'}`} />
-              <span>Customer</span>
+              {role === 'customer' && (
+                <motion.div
+                  layoutId="activeLoginRoleTab"
+                  className="absolute inset-0 bg-white rounded-lg shadow-xs -z-10"
+                  transition={
+                    shouldReduceMotion
+                      ? { duration: 0 }
+                      : { type: 'spring', stiffness: 500, damping: 35 }
+                  }
+                />
+              )}
+              <User
+                className={`w-3.5 h-3.5 transition-colors ${
+                  role === 'customer' ? 'text-primary' : 'text-slate-subtle'
+                }`}
+              />
+              <span
+                className={
+                  role === 'customer'
+                    ? 'text-slate-charcoal font-bold'
+                    : 'text-slate-muted'
+                }
+              >
+                Customer
+              </span>
             </button>
             <button
               type="button"
               onClick={() => setRole('pharmacy')}
-              className={`flex-1 py-2 px-3 rounded-lg text-xs font-semibold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
-                role === 'pharmacy'
-                  ? 'bg-white text-slate-charcoal shadow-xs'
-                  : 'text-slate-muted hover:text-slate-charcoal'
-              }`}
+              className="flex-1 py-2 px-3 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer relative z-10 transition-colors"
             >
-              <Store className={`w-3.5 h-3.5 ${role === 'pharmacy' ? 'text-primary' : 'text-slate-subtle'}`} />
-              <span>Pharmacy Owner</span>
+              {role === 'pharmacy' && (
+                <motion.div
+                  layoutId="activeLoginRoleTab"
+                  className="absolute inset-0 bg-white rounded-lg shadow-xs -z-10"
+                  transition={
+                    shouldReduceMotion
+                      ? { duration: 0 }
+                      : { type: 'spring', stiffness: 500, damping: 35 }
+                  }
+                />
+              )}
+              <Store
+                className={`w-3.5 h-3.5 transition-colors ${
+                  role === 'pharmacy' ? 'text-primary' : 'text-slate-subtle'
+                }`}
+              />
+              <span
+                className={
+                  role === 'pharmacy'
+                    ? 'text-slate-charcoal font-bold'
+                    : 'text-slate-muted'
+                }
+              >
+                Pharmacy Owner
+              </span>
             </button>
           </div>
 
@@ -144,6 +209,14 @@ export const LoginPage: React.FC = () => {
               OR CONTINUE WITH
             </span>
           </div>
+
+          {/* Error Alert Box */}
+          {(formError || authError) && (
+            <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+              <span className="font-medium">{formError || authError}</span>
+            </div>
+          )}
 
           {/* Form */}
           <form onSubmit={handleSubmit} className="space-y-4">
@@ -222,14 +295,17 @@ export const LoginPage: React.FC = () => {
               </label>
             </div>
 
-            {/* Submit Button */}
-            <button
+            {/* Animated Animate UI Button */}
+            <Button
               type="submit"
-              className="w-full h-11 bg-primary hover:bg-primary-hover active:scale-[0.99] text-white font-semibold text-sm rounded-lg shadow-xs transition-all flex items-center justify-center gap-2 cursor-pointer group"
+              variant="primary"
+              size="lg"
+              isLoading={loading}
+              rightIcon={<ArrowRight className="w-4 h-4 transition-transform group-hover:translate-x-1" />}
+              className="w-full h-11 active:scale-[0.99] transition-all group"
             >
-              <span>{role === 'customer' ? 'Sign In to Account' : 'Access Dispatch Portal'}</span>
-              <ArrowRight className="w-4 h-4 transition-transform group-hover:translate-x-1" />
-            </button>
+              {role === 'customer' ? 'Sign In to Account' : 'Access Dispatch Portal'}
+            </Button>
           </form>
 
           {/* Bottom Footnote Redirect */}
@@ -241,7 +317,7 @@ export const LoginPage: React.FC = () => {
               </Link>
             </p>
           </div>
-        </div>
+        </motion.div>
       </main>
 
       {/* Footer */}

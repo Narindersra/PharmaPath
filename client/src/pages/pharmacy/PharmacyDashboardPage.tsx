@@ -1,5 +1,7 @@
-import React, { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Link } from 'react-router-dom';
+import { useAuth } from '../../context/AuthContext';
+import { apiFetch } from '../../lib/api';
 import {
   Package,
   Clock,
@@ -166,8 +168,93 @@ const INITIAL_ROSTER: MedicineRosterItem[] = [
   }
 ];
 
+export interface PharmacyReservationItem {
+  _id: string;
+  token: string;
+  smsPin: string;
+  counterNumber: string;
+  quantity: number;
+  unitPrice: number;
+  totalPrice: number;
+  status: 'PENDING' | 'CONFIRMED' | 'COLLECTED' | 'REJECTED' | 'CANCELLED';
+  expiresAt: string;
+  notes?: string;
+  createdAt: string;
+  customerId?: {
+    name: string;
+    email: string;
+    phone?: string;
+  };
+  medicineId?: {
+    _id: string;
+    name: string;
+    genericName: string;
+    requiresPrescription?: boolean;
+    isColdChain?: boolean;
+    batchNumber?: string;
+    rackLocation?: string;
+  };
+}
+
+export interface BackendMedicineItem {
+  _id: string;
+  name: string;
+  genericName: string;
+  price: number;
+  stock: number;
+  minStockAlert?: number;
+  expiryDate: string;
+  batchNumber?: string;
+  rackLocation?: string;
+  isColdChain?: boolean;
+  requiresPrescription?: boolean;
+}
+
+const mapBackendToRoster = (med: BackendMedicineItem): MedicineRosterItem => {
+  const isCold = med.isColdChain ?? false;
+  const initials = (med.name || 'MD').substring(0, 2).toUpperCase();
+  const minStock = med.minStockAlert || 20;
+
+  let badgeText = 'Optimal';
+  let badgeType: 'low-stock' | 'expiring' | 'optimal' | 'cold-chain' = 'optimal';
+
+  if (isCold) {
+    badgeText = 'Cold Chain (4°C)';
+    badgeType = 'cold-chain';
+  } else if (med.stock < minStock) {
+    badgeText = 'Low Stock';
+    badgeType = 'low-stock';
+  } else if (med.expiryDate) {
+    const diffDays = (new Date(med.expiryDate).getTime() - Date.now()) / (1000 * 3600 * 24);
+    if (diffDays > 0 && diffDays < 60) {
+      badgeText = `Expiring ${Math.ceil(diffDays)}d`;
+      badgeType = 'expiring';
+    }
+  }
+
+  return {
+    id: med._id,
+    initials,
+    initialsBg: isCold ? 'bg-sky-100' : 'bg-emerald-100',
+    initialsColor: isCold ? 'text-sky-900' : 'text-emerald-900',
+    name: med.name,
+    generic: med.genericName,
+    badgeText,
+    badgeType,
+    batchNo: med.batchNumber || 'BT-2026',
+    expiryDate: med.expiryDate,
+    rack: med.rackLocation || 'Rack A-01',
+    stockQty: med.stock,
+    stockUnit: 'Strips',
+    minQty: minStock,
+    price: med.price,
+    actionType: med.stock < minStock ? 'reorder' : 'adjust',
+    category: isCold ? 'cold-chain' : med.requiresPrescription ? 'schedule-h' : 'all',
+  };
+};
+
 export const PharmacyDashboardPage: React.FC = () => {
-  const navigate = useNavigate();
+  const { user, logout } = useAuth();
   const [activeTab, setActiveTab] = useState<'overview' | 'inventory' | 'notifications' | 'reservations' | 'batch-expiry' | 'csv-sync' | 'license' | 'settings'>('overview');
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
@@ -175,6 +262,14 @@ export const PharmacyDashboardPage: React.FC = () => {
   const [rosterSearch, setRosterSearch] = useState('');
   const [activeRosterFilter, setActiveRosterFilter] = useState<'all' | 'low-stock' | 'near-expiry' | 'cold-chain' | 'schedule-h'>('all');
   const [rosterItems, setRosterItems] = useState<MedicineRosterItem[]>(INITIAL_ROSTER);
+  const [reservations, setReservations] = useState<PharmacyReservationItem[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [stats, setStats] = useState({
+    totalSKUs: 6,
+    totalStockUnits: 848,
+    totalInventoryValue: 72901,
+    lowStockCount: 1,
+  });
 
   // Add Stock Modal state
   const [showAddStockModal, setShowAddStockModal] = useState(false);
@@ -190,47 +285,162 @@ export const PharmacyDashboardPage: React.FC = () => {
   // Global search input state
   const [globalSearch, setGlobalSearch] = useState('');
 
+  // Fetch Inventory from Database
+  const fetchInventory = useCallback(async () => {
+    try {
+      setLoading(true);
+      const res = await apiFetch<{
+        success: boolean;
+        data: BackendMedicineItem[];
+        stats?: {
+          totalSKUs: number;
+          totalStockUnits: number;
+          totalInventoryValue: number;
+          lowStockCount: number;
+        };
+      }>('/inventory');
+      if (res?.data && res.data.length > 0) {
+        setRosterItems(res.data.map(mapBackendToRoster));
+      }
+      if (res?.stats) {
+        setStats(res.stats);
+      }
+    } catch (err) {
+      console.error('Failed to load inventory from backend:', err);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // Fetch Reservations from Database
+  const fetchReservations = useCallback(async () => {
+    try {
+      const res = await apiFetch<{
+        success: boolean;
+        data: PharmacyReservationItem[];
+        activeHoldsCount?: number;
+      }>('/reservations/pharmacy');
+      if (res?.data) {
+        setReservations(res.data);
+      }
+    } catch (err) {
+      console.error('Failed to load reservations:', err);
+    }
+  }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    apiFetch<{
+      success: boolean;
+      data: BackendMedicineItem[];
+      stats?: {
+        totalSKUs: number;
+        totalStockUnits: number;
+        totalInventoryValue: number;
+        lowStockCount: number;
+      };
+    }>('/inventory')
+      .then((res) => {
+        if (isMounted) {
+          if (res?.data && res.data.length > 0) {
+            setRosterItems(res.data.map(mapBackendToRoster));
+          }
+          if (res?.stats) {
+            setStats(res.stats);
+          }
+        }
+      })
+      .catch((err) => console.error('Failed to load inventory:', err));
+
+    apiFetch<{
+      success: boolean;
+      data: PharmacyReservationItem[];
+    }>('/reservations/pharmacy')
+      .then((res) => {
+        if (isMounted && res?.data) {
+          setReservations(res.data);
+        }
+      })
+      .catch((err) => console.error('Failed to load reservations:', err));
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
   // Handle Quick Reorder / Adjustment
-  const handleItemAction = (id: string, action: string) => {
+  const handleItemAction = async (id: string, action: string) => {
     if (action === 'reorder') {
       alert(`PO Draft generated for SKU ${id}. Sent to preferred distributor!`);
     } else if (action === 'return-lot') {
       alert(`Debit Note / Return voucher generated for Batch ${id}.`);
     } else {
+      const currentItem = rosterItems.find((i) => i.id === id);
+      const newStock = (currentItem?.stockQty || 0) + 10;
       setRosterItems((prev) =>
         prev.map((item) =>
-          item.id === id ? { ...item, stockQty: item.stockQty + 10 } : item
+          item.id === id ? { ...item, stockQty: newStock } : item
         )
       );
+
+      // Persist stock adjustment to database
+      try {
+        await apiFetch(`/inventory/${id}`, {
+          method: 'PUT',
+          body: { stock: newStock },
+        });
+        fetchInventory();
+      } catch (err) {
+        console.error('Failed to adjust stock:', err);
+      }
+    }
+  };
+
+  // Handle Delete Medicine
+  const handleDeleteMedicine = async (id: string) => {
+    if (!confirm('Are you sure you want to remove this medicine SKU from inventory?')) return;
+    try {
+      await apiFetch(`/inventory/${id}`, { method: 'DELETE' });
+      setRosterItems((prev) => prev.filter((item) => item.id !== id));
+      fetchInventory();
+    } catch (err) {
+      alert((err as Error).message || 'Failed to delete medicine');
     }
   };
 
   // Handle Add Medicine Submit
-  const handleAddStockSubmit = (e: React.FormEvent) => {
+  const handleAddStockSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newMedName) return;
 
-    const newItem: MedicineRosterItem = {
-      id: `med-${Date.now()}`,
-      initials: newMedName.substring(0, 2).toUpperCase(),
-      initialsBg: isColdChain ? 'bg-sky-100' : 'bg-emerald-100',
-      initialsColor: isColdChain ? 'text-sky-900' : 'text-emerald-900',
-      name: newMedName,
-      generic: newMedGeneric || 'Formulation Salt Compound',
-      badgeText: isColdChain ? 'Cold Chain (4°C)' : 'Optimal',
-      badgeType: isColdChain ? 'cold-chain' : 'optimal',
-      batchNo: newMedBatch || 'BT-NEW26',
-      expiryDate: newMedExpiry || '12/27',
-      rack: newMedRack || 'Rack A-01',
-      stockQty: parseInt(newMedQty, 10) || 50,
-      stockUnit: 'Strips',
-      minQty: 20,
-      price: parseFloat(newMedPrice) || 120.0,
-      actionType: 'adjust',
-      category: isColdChain ? 'cold-chain' : 'all'
-    };
+    try {
+      const payload = {
+        name: newMedName.trim(),
+        genericName: newMedGeneric.trim() || 'Formulation Salt Compound',
+        batchNumber: newMedBatch.trim() || `BT-${Math.floor(1000 + Math.random() * 9000)}`,
+        rackLocation: newMedRack.trim() || 'Rack A-01',
+        stock: parseInt(newMedQty, 10) || 50,
+        price: parseFloat(newMedPrice) || 120.0,
+        expiryDate: newMedExpiry.trim() || '2027-12-31',
+        isColdChain,
+      };
 
-    setRosterItems([newItem, ...rosterItems]);
+      const res = await apiFetch<{ success: boolean; data: BackendMedicineItem }>('/inventory', {
+        method: 'POST',
+        body: payload,
+      });
+
+      if (res?.data) {
+        const mapped = mapBackendToRoster(res.data);
+        setRosterItems((prev) => [mapped, ...prev]);
+        fetchInventory();
+      }
+    } catch (err) {
+      console.error('Failed to add medicine:', err);
+      alert((err as Error).message || 'Failed to add medicine to inventory');
+    }
+
     setShowAddStockModal(false);
     setNewMedName('');
     setNewMedGeneric('');
@@ -240,6 +450,24 @@ export const PharmacyDashboardPage: React.FC = () => {
     setNewMedPrice('');
     setNewMedExpiry('');
     setIsColdChain(false);
+  };
+
+  // Handle Reservation status update (Accept, Reject, Mark Collected)
+  const handleReservationStatusChange = async (
+    reservationId: string,
+    status: 'CONFIRMED' | 'REJECTED' | 'COLLECTED'
+  ) => {
+    try {
+      await apiFetch(`/reservations/${reservationId}/status`, {
+        method: 'PATCH',
+        body: { status },
+      });
+      fetchReservations();
+      fetchInventory();
+    } catch (err) {
+      console.error('Failed to update reservation status:', err);
+      alert((err as Error).message || 'Failed to update reservation status');
+    }
   };
 
   // Filtered roster
@@ -471,16 +699,27 @@ export const PharmacyDashboardPage: React.FC = () => {
           <div className="flex items-center justify-between pt-1">
             <div className="flex items-center gap-2.5 min-w-0">
               <div className="w-8 h-8 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-700 font-bold text-xs">
-                RK
+                {user?.name
+                  ? user.name
+                      .split(' ')
+                      .map((n) => n[0])
+                      .join('')
+                      .slice(0, 2)
+                      .toUpperCase()
+                  : 'RK'}
               </div>
               <div className="min-w-0">
-                <p className="text-xs font-bold text-slate-900 truncate">Dr. Rajesh Kumar</p>
-                <p className="text-[10px] text-slate-400 font-mono truncate">KA-BLR-2024-88491</p>
+                <p className="text-xs font-bold text-slate-900 truncate">
+                  {user?.name || 'Dr. Rajesh Kumar'}
+                </p>
+                <p className="text-[10px] text-slate-400 font-mono truncate">
+                  {user?.email || 'KA-BLR-2024-88491'}
+                </p>
               </div>
             </div>
             <button
               type="button"
-              onClick={() => navigate('/login')}
+              onClick={logout}
               className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
               title="Sign Out"
             >
@@ -617,7 +856,7 @@ export const PharmacyDashboardPage: React.FC = () => {
                   <div>
                     <div className="flex items-baseline gap-2">
                       <span className="font-display text-3xl font-extrabold text-slate-900 font-mono tracking-tight">
-                        3 Requests
+                        {reservations.filter((r) => r.status === 'CONFIRMED' || r.status === 'PENDING').length} Holds
                       </span>
                     </div>
                     <p className="text-xs font-semibold text-amber-800 mt-0.5">
@@ -646,7 +885,7 @@ export const PharmacyDashboardPage: React.FC = () => {
                   <div>
                     <div className="flex items-baseline gap-2">
                       <span className="font-display text-3xl font-extrabold text-slate-900 font-mono tracking-tight">
-                        4 Patients
+                        {reservations.filter((r) => r.status === 'CONFIRMED').length} Patients
                       </span>
                     </div>
                     <p className="text-xs font-semibold text-teal-800 mt-0.5">
@@ -664,7 +903,7 @@ export const PharmacyDashboardPage: React.FC = () => {
                 <div className="bg-white rounded-2xl p-5 border border-slate-200/80 shadow-2xs flex flex-col justify-between space-y-3">
                   <div className="flex items-center justify-between">
                     <span className="px-2 py-0.5 rounded-md text-[10px] font-mono font-bold bg-emerald-50 text-emerald-800 border border-emerald-200">
-                      Today&apos;s Realized
+                      Inventory Valuation
                     </span>
                     <TrendingUp className="w-4 h-4 text-emerald-700" />
                   </div>
@@ -672,11 +911,11 @@ export const PharmacyDashboardPage: React.FC = () => {
                   <div>
                     <div className="flex items-baseline gap-2">
                       <span className="font-display text-3xl font-extrabold text-slate-900 font-mono tracking-tight">
-                        ₹4,820
+                        ₹{stats.totalInventoryValue.toLocaleString('en-IN')}
                       </span>
                     </div>
                     <p className="text-xs font-semibold text-slate-600 mt-0.5">
-                      18 Prescriptions Collected
+                      {stats.totalStockUnits} Total Stock Units
                     </p>
                   </div>
 
@@ -701,11 +940,11 @@ export const PharmacyDashboardPage: React.FC = () => {
                   <div>
                     <div className="flex items-baseline gap-2">
                       <span className="font-display text-3xl font-extrabold text-slate-900 font-mono tracking-tight">
-                        3,420 SKUs
+                        {stats.totalSKUs} SKUs
                       </span>
                     </div>
                     <p className="text-xs font-semibold text-slate-600 mt-0.5">
-                      18 Low Stock • 12 Near Expiry
+                      {stats.lowStockCount} Low Stock Alert
                     </p>
                   </div>
 
@@ -751,153 +990,109 @@ export const PharmacyDashboardPage: React.FC = () => {
 
                     {/* Active Queue List */}
                     <div className="divide-y divide-slate-100">
-                      {/* Item 1 */}
-                      <div className="py-3.5 flex flex-col md:flex-row md:items-center justify-between gap-3">
-                        <div className="space-y-1">
-                          <div className="flex items-center gap-2">
-                            <span className="font-mono text-xs font-bold px-2 py-0.5 rounded bg-slate-100 text-slate-800">
-                              #TKN-8491
-                            </span>
-                            <span className="font-mono text-[10px] font-bold px-2 py-0.5 rounded bg-purple-50 text-purple-800 border border-purple-200">
-                              Rx Required
-                            </span>
-                            <span className="text-[11px] font-mono text-amber-700 font-bold flex items-center gap-1">
-                              <Clock className="w-3 h-3" />
-                              <span>Expires in 18 mins</span>
-                            </span>
-                          </div>
-
-                          <p className="text-sm font-bold text-slate-900">
-                            2x Augmentin 625 Duo Tablet
-                          </p>
-                          <p className="text-[11px] text-slate-400 font-mono">
-                            Amoxycillin (500mg) + Clavulanic Acid (125mg)
-                          </p>
-
-                          <div className="flex items-center gap-2 text-xs text-slate-500 pt-0.5">
-                            <span className="font-semibold text-slate-800 flex items-center gap-1">
-                              <User className="w-3.5 h-3.5 text-slate-400" /> Ramesh P. Sharma
-                            </span>
-                            <span>•</span>
-                            <span className="font-mono">+91 98450 12345</span>
-                            <span>•</span>
-                            <span className="font-mono font-bold text-slate-900">₹403.00</span>
-                          </div>
+                      {reservations.length === 0 ? (
+                        <div className="py-8 text-center text-xs text-slate-400 font-mono">
+                          No active holds or incoming patient reservations at this moment.
                         </div>
-
-                        <div className="flex items-center gap-2 shrink-0">
-                          <button
-                            type="button"
-                            onClick={() => alert('Reservation #TKN-8491 rejected.')}
-                            className="px-3 py-1.5 rounded-xl border border-slate-200 hover:bg-rose-50 hover:text-rose-700 hover:border-rose-200 text-slate-600 text-xs font-semibold cursor-pointer transition-colors"
+                      ) : (
+                        reservations.slice(0, 5).map((res) => (
+                          <div
+                            key={res._id}
+                            className={`py-3.5 flex flex-col md:flex-row md:items-center justify-between gap-3 ${
+                              res.status === 'CONFIRMED' ? 'bg-emerald-50/20 -mx-2 px-2 rounded-xl' : ''
+                            }`}
                           >
-                            Reject
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => alert('Reservation #TKN-8491 confirmed! Stock held for 2 hours.')}
-                            className="px-4 py-1.5 rounded-xl bg-teal-800 hover:bg-teal-900 text-white text-xs font-semibold shadow-xs cursor-pointer flex items-center gap-1.5 transition-colors"
-                          >
-                            <Check className="w-3.5 h-3.5" />
-                            <span>Accept &amp; Hold</span>
-                          </button>
-                        </div>
-                      </div>
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-2">
+                                <span className="font-mono text-xs font-bold px-2 py-0.5 rounded bg-slate-100 text-slate-800">
+                                  #{res.token}
+                                </span>
+                                <span
+                                  className={`font-mono text-[10px] font-bold px-2 py-0.5 rounded border ${
+                                    res.status === 'CONFIRMED'
+                                      ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                                      : res.status === 'COLLECTED'
+                                      ? 'bg-blue-50 text-blue-800 border-blue-200'
+                                      : 'bg-amber-50 text-amber-800 border-amber-200'
+                                  }`}
+                                >
+                                  {res.status === 'CONFIRMED' ? 'Held at Counter' : res.status}
+                                </span>
+                                {res.medicineId?.requiresPrescription && (
+                                  <span className="font-mono text-[10px] font-bold px-2 py-0.5 rounded bg-purple-50 text-purple-800 border border-purple-200">
+                                    Rx Required
+                                  </span>
+                                )}
+                                <span className="text-[11px] font-mono text-amber-700 font-bold flex items-center gap-1">
+                                  <Clock className="w-3 h-3" />
+                                  <span>SMS PIN: {res.smsPin}</span>
+                                </span>
+                              </div>
 
-                      {/* Item 2 */}
-                      <div className="py-3.5 flex flex-col md:flex-row md:items-center justify-between gap-3">
-                        <div className="space-y-1">
-                          <div className="flex items-center gap-2">
-                            <span className="font-mono text-xs font-bold px-2 py-0.5 rounded bg-slate-100 text-slate-800">
-                              #TKN-8492
-                            </span>
-                            <span className="font-mono text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-50 text-emerald-800 border border-emerald-200">
-                              OTC Medication
-                            </span>
-                            <span className="text-[11px] font-mono text-amber-700 font-bold flex items-center gap-1">
-                              <Clock className="w-3 h-3" />
-                              <span>Expires in 24 mins</span>
-                            </span>
+                              <p className="text-sm font-bold text-slate-900">
+                                {res.quantity}x {res.medicineId?.name || 'Prescription Medicine'}
+                              </p>
+                              <p className="text-[11px] text-slate-400 font-mono">
+                                {res.medicineId?.genericName || 'Verified batch'}
+                              </p>
+
+                              <div className="flex items-center gap-2 text-xs text-slate-500 pt-0.5">
+                                <span className="font-semibold text-slate-800 flex items-center gap-1">
+                                  <User className="w-3.5 h-3.5 text-slate-400" /> {res.customerId?.name || 'Patient'}
+                                </span>
+                                <span>•</span>
+                                <span className="font-mono">{res.customerId?.phone || '+91 98765 43210'}</span>
+                                <span>•</span>
+                                <span className="font-mono font-bold text-slate-900">₹{res.totalPrice.toFixed(2)}</span>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-2 shrink-0">
+                              {res.status === 'CONFIRMED' ? (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleReservationStatusChange(res._id, 'REJECTED')}
+                                    className="px-3 py-1.5 rounded-xl border border-slate-200 hover:bg-rose-50 hover:text-rose-700 hover:border-rose-200 text-slate-600 text-xs font-semibold cursor-pointer transition-colors"
+                                  >
+                                    Release Hold
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleReservationStatusChange(res._id, 'COLLECTED')}
+                                    className="px-4 py-1.5 rounded-xl bg-teal-800 hover:bg-teal-900 text-white text-xs font-semibold shadow-xs cursor-pointer flex items-center gap-1.5 transition-colors"
+                                  >
+                                    <Check className="w-3.5 h-3.5" />
+                                    <span>Mark Dispensed</span>
+                                  </button>
+                                </>
+                              ) : res.status === 'COLLECTED' ? (
+                                <span className="px-3 py-1 rounded-lg text-xs font-mono font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200">
+                                  ✓ Dispensed
+                                </span>
+                              ) : (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleReservationStatusChange(res._id, 'REJECTED')}
+                                    className="px-3 py-1.5 rounded-xl border border-slate-200 hover:bg-rose-50 hover:text-rose-700 hover:border-rose-200 text-slate-600 text-xs font-semibold cursor-pointer transition-colors"
+                                  >
+                                    Reject
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleReservationStatusChange(res._id, 'CONFIRMED')}
+                                    className="px-4 py-1.5 rounded-xl bg-teal-800 hover:bg-teal-900 text-white text-xs font-semibold shadow-xs cursor-pointer flex items-center gap-1.5 transition-colors"
+                                  >
+                                    <Check className="w-3.5 h-3.5" />
+                                    <span>Accept &amp; Hold</span>
+                                  </button>
+                                </>
+                              )}
+                            </div>
                           </div>
-
-                          <p className="text-sm font-bold text-slate-900">
-                            3x Dolo 650mg Tablet
-                          </p>
-                          <p className="text-[11px] text-slate-400 font-mono">
-                            Paracetamol (650mg) • Strip of 15
-                          </p>
-
-                          <div className="flex items-center gap-2 text-xs text-slate-500 pt-0.5">
-                            <span className="font-semibold text-slate-800 flex items-center gap-1">
-                              <User className="w-3.5 h-3.5 text-slate-400" /> Priya Narayanan
-                            </span>
-                            <span>•</span>
-                            <span className="font-mono">+91 97412 88990</span>
-                            <span>•</span>
-                            <span className="font-mono font-bold text-slate-900">₹92.40</span>
-                          </div>
-                        </div>
-
-                        <div className="flex items-center gap-2 shrink-0">
-                          <button
-                            type="button"
-                            onClick={() => alert('Reservation #TKN-8492 rejected.')}
-                            className="px-3 py-1.5 rounded-xl border border-slate-200 hover:bg-rose-50 hover:text-rose-700 hover:border-rose-200 text-slate-600 text-xs font-semibold cursor-pointer transition-colors"
-                          >
-                            Reject
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => alert('Reservation #TKN-8492 confirmed! Stock held for 2 hours.')}
-                            className="px-4 py-1.5 rounded-xl bg-teal-800 hover:bg-teal-900 text-white text-xs font-semibold shadow-xs cursor-pointer flex items-center gap-1.5 transition-colors"
-                          >
-                            <Check className="w-3.5 h-3.5" />
-                            <span>Accept &amp; Hold</span>
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* Item 3 (Active hold ready for pickup) */}
-                      <div className="py-3.5 flex flex-col md:flex-row md:items-center justify-between gap-3 bg-emerald-50/30 -mx-2 px-2 rounded-xl">
-                        <div className="space-y-1">
-                          <div className="flex items-center gap-2">
-                            <span className="font-mono text-xs font-bold px-2 py-0.5 rounded bg-slate-100 text-slate-800">
-                              #TKN-8490
-                            </span>
-                            <span className="font-mono text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">
-                              Held at Counter (48m left)
-                            </span>
-                            <span className="font-mono text-[10px] font-bold px-2 py-0.5 rounded bg-purple-50 text-purple-800 border border-purple-200">
-                              Verify Physical Rx
-                            </span>
-                          </div>
-
-                          <p className="text-sm font-bold text-slate-900">
-                            1x Telma 40mg Tablet (Strip of 30)
-                          </p>
-
-                          <div className="flex items-center gap-2 text-xs text-slate-500 pt-0.5">
-                            <span className="font-semibold text-slate-800 flex items-center gap-1">
-                              <User className="w-3.5 h-3.5 text-slate-400" /> Karthik Raja
-                            </span>
-                            <span>•</span>
-                            <span className="font-mono">+91 99001 54321</span>
-                            <span>•</span>
-                            <span className="font-mono font-bold text-slate-900">₹220.00</span>
-                          </div>
-                        </div>
-
-                        <div className="flex items-center gap-2 shrink-0">
-                          <button
-                            type="button"
-                            onClick={() => alert('Dispense confirmed for Token #TKN-8490! Receipt generated.')}
-                            className="px-4 py-1.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold shadow-xs cursor-pointer flex items-center gap-1.5 transition-colors"
-                          >
-                            <CheckCircle2 className="w-3.5 h-3.5" />
-                            <span>Mark Dispensed</span>
-                          </button>
-                        </div>
-                      </div>
+                        ))
+                      )}
                     </div>
                   </div>
 
@@ -906,8 +1101,9 @@ export const PharmacyDashboardPage: React.FC = () => {
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                       <div>
                         <div className="flex items-center gap-2">
-                          <h2 className="font-display text-base font-bold text-slate-900">
-                            High-Demand Medicine Availability
+                          <h2 className="font-display text-base font-bold text-slate-900 flex items-center gap-2">
+                            <span>High-Demand Medicine Availability</span>
+                            {loading && <RefreshCw className="w-3.5 h-3.5 animate-spin text-teal-700" />}
                           </h2>
                           <span className="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-teal-50 text-teal-800 border border-teal-200">
                             Live Patient Index
@@ -1325,7 +1521,8 @@ export const PharmacyDashboardPage: React.FC = () => {
                       </label>
                       <input
                         type="text"
-                        defaultValue="Apex Medico & Pharmacy"
+                        defaultValue=""
+                        placeholder="e.g. Apollo Pharmacy"
                         className="w-full h-9 px-3 rounded-xl border border-slate-200 text-xs text-slate-900 outline-none focus:border-teal-700 bg-slate-50"
                       />
                     </div>
@@ -1336,7 +1533,8 @@ export const PharmacyDashboardPage: React.FC = () => {
                       </label>
                       <input
                         type="text"
-                        defaultValue="Dr. Rajesh Kumar"
+                        defaultValue=""
+                        placeholder="Chief Pharmacist Name"
                         className="w-full h-9 px-3 rounded-xl border border-slate-200 text-xs text-slate-900 outline-none focus:border-teal-700 bg-slate-50"
                       />
                     </div>
@@ -1348,7 +1546,8 @@ export const PharmacyDashboardPage: React.FC = () => {
                     </label>
                     <input
                       type="text"
-                      defaultValue="#42, 80 Feet Road, Koramangala 4th Block, Bengaluru, Karnataka - 560034"
+                      defaultValue=""
+                      placeholder="Dispensary counter address"
                       className="w-full h-9 px-3 rounded-xl border border-slate-200 text-xs text-slate-900 outline-none focus:border-teal-700 bg-slate-50"
                     />
                   </div>
@@ -1367,7 +1566,8 @@ export const PharmacyDashboardPage: React.FC = () => {
                       </label>
                       <input
                         type="text"
-                        defaultValue="09:00 AM"
+                        defaultValue=""
+                        placeholder="09:00 AM"
                         className="w-full h-9 px-3 rounded-xl border border-slate-200 text-xs text-slate-900 outline-none focus:border-teal-700 bg-slate-50 font-mono"
                       />
                     </div>
@@ -1377,7 +1577,8 @@ export const PharmacyDashboardPage: React.FC = () => {
                       </label>
                       <input
                         type="text"
-                        defaultValue="10:00 PM"
+                        defaultValue=""
+                        placeholder="10:00 PM"
                         className="w-full h-9 px-3 rounded-xl border border-slate-200 text-xs text-slate-900 outline-none focus:border-teal-700 bg-slate-50 font-mono"
                       />
                     </div>
@@ -1419,7 +1620,8 @@ export const PharmacyDashboardPage: React.FC = () => {
                       </label>
                       <input
                         type="number"
-                        defaultValue={5}
+                        defaultValue=""
+                        placeholder="5"
                         className="w-full h-9 px-3 rounded-xl border border-slate-200 text-xs font-mono text-slate-900 outline-none focus:border-teal-700 bg-slate-50"
                       />
                     </div>
@@ -1519,13 +1721,24 @@ export const PharmacyDashboardPage: React.FC = () => {
                             ₹{item.price.toFixed(2)}
                           </td>
                           <td className="py-3 text-right">
-                            <button
-                              type="button"
-                              onClick={() => handleItemAction(item.id, 'adjust')}
-                              className="px-2.5 py-1 rounded-lg border border-slate-200 text-slate-700 font-semibold text-xs hover:bg-slate-100 cursor-pointer"
-                            >
-                              +10 Units
-                            </button>
+                            <div className="flex items-center justify-end gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => handleItemAction(item.id, 'adjust')}
+                                className="px-2.5 py-1 rounded-lg border border-slate-200 text-slate-700 font-semibold text-xs hover:bg-slate-100 cursor-pointer"
+                                title="Add 10 units to stock"
+                              >
+                                +10 Units
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteMedicine(item.id)}
+                                className="p-1 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 cursor-pointer transition-colors"
+                                title="Delete medicine from inventory"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       ))}
@@ -1543,7 +1756,7 @@ export const PharmacyDashboardPage: React.FC = () => {
             <div className="space-y-6">
               <div>
                 <h1 className="font-display text-2xl font-bold text-slate-900 tracking-tight">
-                  Hold Reservations (7 Pending)
+                  Hold Reservations ({reservations.filter((r) => r.status === 'CONFIRMED' || r.status === 'PENDING').length} Active)
                 </h1>
                 <p className="text-xs text-slate-500 mt-0.5">
                   Patient courtesy 2-hour holds awaiting counter verification &amp; pickup.
@@ -1551,77 +1764,96 @@ export const PharmacyDashboardPage: React.FC = () => {
               </div>
 
               <div className="space-y-3">
-                {[
-                  {
-                    token: 'TKN-8491',
-                    patient: 'Ramesh P. Sharma',
-                    phone: '+91 98450 12345',
-                    medicine: 'Augmentin 625 Duo (2 Strips)',
-                    rx: true,
-                    time: '18 mins left',
-                    bill: '₹408.00'
-                  },
-                  {
-                    token: 'TKN-8492',
-                    patient: 'Priya Narayanan',
-                    phone: '+91 97412 88990',
-                    medicine: 'Dolo 650mg (3 Strips)',
-                    rx: false,
-                    time: '34 mins left',
-                    bill: '₹97.50'
-                  },
-                  {
-                    token: 'TKN-8490',
-                    patient: 'Karthik Raja',
-                    phone: '+91 99001 54321',
-                    medicine: 'Telma 40mg (1 Strip)',
-                    rx: true,
-                    time: '1h 14m left',
-                    bill: '₹245.00'
-                  }
-                ].map((res, idx) => (
-                  <div
-                    key={idx}
-                    className="bg-white rounded-2xl border border-slate-200/80 p-5 shadow-2xs flex flex-col sm:flex-row sm:items-center justify-between gap-4"
-                  >
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono text-xs font-bold px-2 py-0.5 rounded bg-slate-100 text-slate-800">
-                          {res.token}
-                        </span>
-                        {res.rx && (
-                          <span className="font-mono text-[10px] font-bold px-2 py-0.5 rounded bg-purple-50 text-purple-800 border border-purple-200">
-                            Rx Required
-                          </span>
-                        )}
-                        <span className="font-mono text-xs text-amber-700 font-bold">
-                          ⏳ {res.time}
-                        </span>
-                      </div>
-                      <p className="font-bold text-slate-900 text-sm">{res.medicine}</p>
-                      <p className="text-xs text-slate-500">
-                        {res.patient} • {res.phone} • <span className="font-mono font-bold text-slate-900">{res.bill}</span>
-                      </p>
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => alert(`Hold cancelled for ${res.token}`)}
-                        className="px-3 py-2 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 text-xs font-semibold cursor-pointer"
-                      >
-                        Cancel Hold
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => alert(`Marked Dispensed for token ${res.token}! Stock adjusted.`)}
-                        className="px-4 py-2 rounded-xl bg-teal-800 hover:bg-teal-900 text-white text-xs font-semibold shadow-xs cursor-pointer"
-                      >
-                        Mark Dispensed
-                      </button>
-                    </div>
+                {reservations.length === 0 ? (
+                  <div className="bg-white rounded-2xl border border-slate-200/80 p-8 text-center text-xs text-slate-400 font-mono">
+                    No active hold reservations currently in queue.
                   </div>
-                ))}
+                ) : (
+                  reservations.map((res) => (
+                    <div
+                      key={res._id}
+                      className="bg-white rounded-2xl border border-slate-200/80 p-5 shadow-2xs flex flex-col sm:flex-row sm:items-center justify-between gap-4"
+                    >
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-xs font-bold px-2 py-0.5 rounded bg-slate-100 text-slate-800">
+                            #{res.token}
+                          </span>
+                          <span
+                            className={`font-mono text-[10px] font-bold px-2 py-0.5 rounded border ${
+                              res.status === 'CONFIRMED'
+                                ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                                : res.status === 'COLLECTED'
+                                ? 'bg-blue-50 text-blue-800 border-blue-200'
+                                : 'bg-amber-50 text-amber-800 border-amber-200'
+                            }`}
+                          >
+                            {res.status}
+                          </span>
+                          {res.medicineId?.requiresPrescription && (
+                            <span className="font-mono text-[10px] font-bold px-2 py-0.5 rounded bg-purple-50 text-purple-800 border border-purple-200">
+                              Rx Required
+                            </span>
+                          )}
+                          <span className="font-mono text-xs text-amber-700 font-bold">
+                            SMS PIN: {res.smsPin}
+                          </span>
+                        </div>
+                        <p className="font-bold text-slate-900 text-sm">
+                          {res.quantity}x {res.medicineId?.name || 'Medicine SKU'}
+                        </p>
+                        <p className="text-xs text-slate-500">
+                          {res.customerId?.name || 'Customer'} • {res.customerId?.phone || '+91 98765 43210'} •{' '}
+                          <span className="font-mono font-bold text-slate-900">₹{res.totalPrice.toFixed(2)}</span>
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        {res.status === 'CONFIRMED' ? (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => handleReservationStatusChange(res._id, 'REJECTED')}
+                              className="px-3 py-2 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 text-xs font-semibold cursor-pointer"
+                            >
+                              Release Hold
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleReservationStatusChange(res._id, 'COLLECTED')}
+                              className="px-4 py-2 rounded-xl bg-teal-800 hover:bg-teal-900 text-white text-xs font-semibold shadow-xs cursor-pointer flex items-center gap-1.5"
+                            >
+                              <Check className="w-3.5 h-3.5" />
+                              <span>Mark Dispensed</span>
+                            </button>
+                          </>
+                        ) : res.status === 'COLLECTED' ? (
+                          <span className="px-3 py-1.5 rounded-lg text-xs font-mono font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200">
+                            ✓ Dispensed at Counter
+                          </span>
+                        ) : (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => handleReservationStatusChange(res._id, 'REJECTED')}
+                              className="px-3 py-2 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 text-xs font-semibold cursor-pointer"
+                            >
+                              Reject
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleReservationStatusChange(res._id, 'CONFIRMED')}
+                              className="px-4 py-2 rounded-xl bg-teal-800 hover:bg-teal-900 text-white text-xs font-semibold shadow-xs cursor-pointer flex items-center gap-1.5"
+                            >
+                              <Check className="w-3.5 h-3.5" />
+                              <span>Accept &amp; Hold</span>
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  ))
+                )}
               </div>
             </div>
           )}

@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
+import { motion, useReducedMotion } from 'motion/react';
 import {
   User,
   Store,
@@ -14,11 +15,16 @@ import {
   Clock,
   FileCheck,
   UploadCloud,
-  Check
+  Check,
+  AlertCircle
 } from 'lucide-react';
+import { useAuth } from '../../context/AuthContext';
+import { Button } from '../../components/ui/Button';
 
 export const SignupPage: React.FC = () => {
   const navigate = useNavigate();
+  const shouldReduceMotion = useReducedMotion();
+  const { register, loading, error: authError, clearError } = useAuth();
   const [role, setRole] = useState<'customer' | 'pharmacy'>('customer');
 
   // Customer Form State
@@ -28,6 +34,7 @@ export const SignupPage: React.FC = () => {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [agreedTerms, setAgreedTerms] = useState(true);
+  const [formError, setFormError] = useState<string | null>(null);
 
   // Pharmacy Owner Form State
   const [pharmacyStoreName, setPharmacyStoreName] = useState('');
@@ -35,8 +42,8 @@ export const SignupPage: React.FC = () => {
   const [fullAddress, setFullAddress] = useState('');
   const [city, setCity] = useState('');
   const [pinCode, setPinCode] = useState('');
-  const [openingTime, setOpeningTime] = useState('09:00 AM');
-  const [closingTime, setClosingTime] = useState('10:00 PM');
+  const [openingTime, setOpeningTime] = useState('');
+  const [closingTime, setClosingTime] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [dlNumber, setDlNumber] = useState('');
@@ -55,31 +62,54 @@ export const SignupPage: React.FC = () => {
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (role === 'pharmacy') {
-      console.log('Registering Pharmacy Owner:', {
-        fullName,
-        email,
-        mobile,
-        pharmacyStoreName,
-        branchArea,
-        fullAddress,
-        city,
-        pinCode,
-        openingTime,
-        closingTime,
-        dlNumber,
-        uploadedFile: uploadedFile?.name,
-        complianceAgreed
-      });
-    } else {
-      console.log('Registering Customer:', { fullName, email, mobile });
+    setFormError(null);
+    clearError();
+
+    const chosenRole: 'CUSTOMER' | 'PHARMACY' = role === 'pharmacy' ? 'PHARMACY' : 'CUSTOMER';
+    const nameToRegister = (role === 'pharmacy' ? (fullName.trim() || pharmacyStoreName.trim()) : fullName.trim());
+
+    if (!nameToRegister) {
+      setFormError('Please enter your full name or pharmacy name');
+      return;
     }
-    if (role === 'pharmacy') {
-      navigate('/pharmacy/dashboard');
-    } else {
-      navigate('/dashboard');
+
+    if (!email.trim()) {
+      setFormError('Please enter a valid email address');
+      return;
+    }
+
+    if (password.length < 6) {
+      setFormError('Password must be at least 6 characters long');
+      return;
+    }
+
+    if (role === 'pharmacy' && confirmPassword && password !== confirmPassword) {
+      setFormError('Passwords do not match');
+      return;
+    }
+
+    try {
+      await register({
+        name: role === 'pharmacy' ? (pharmacyStoreName.trim() || fullName.trim()) : fullName.trim(),
+        email: email.trim(),
+        password,
+        role: chosenRole,
+        pharmacyName: role === 'pharmacy' ? (pharmacyStoreName.trim() || fullName.trim()) : undefined,
+        address: role === 'pharmacy' ? fullAddress.trim() : undefined,
+        city: role === 'pharmacy' ? city.trim() : undefined,
+        phone: role === 'pharmacy' ? mobile.trim() : undefined,
+        licenseNumber: role === 'pharmacy' ? dlNumber.trim() : undefined,
+        closingTime: role === 'pharmacy' ? (closingTime.trim() || '10:00 PM') : undefined,
+      });
+      // Routing is automatically handled by AuthContext based on user.role
+    } catch (err: unknown) {
+      if (err instanceof Error) {
+        setFormError(err.message);
+      } else {
+        setFormError('Registration failed. Please check your information.');
+      }
     }
   };
 
@@ -116,9 +146,13 @@ export const SignupPage: React.FC = () => {
         </div>
       </header>
 
-      {/* Main Single Centered Auth Card */}
+      {/* Main Single Centered Auth Card with Page Transition */}
       <main className="w-full flex-1 flex items-center justify-center px-4 py-6">
-        <div
+        <motion.div
+          layout
+          initial={shouldReduceMotion ? { opacity: 0 } : { opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.35, ease: 'easeOut' }}
           className={`w-full ${
             role === 'pharmacy' ? 'max-w-[620px]' : 'max-w-[460px]'
           } bg-white rounded-2xl border border-border-soft shadow-lg p-6 sm:p-8 space-y-5 relative transition-all duration-300`}
@@ -142,31 +176,69 @@ export const SignupPage: React.FC = () => {
             </p>
           </div>
 
-          {/* Role Switcher Tabs */}
-          <div className="p-1 rounded-xl bg-surface-container flex items-center gap-1">
+          {/* Animated Role Switcher Tabs */}
+          <div className="p-1 rounded-xl bg-surface-container flex items-center gap-1 relative">
             <button
               type="button"
               onClick={() => setRole('customer')}
-              className={`flex-1 py-2 px-3 rounded-lg text-xs font-semibold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
-                role === 'customer'
-                  ? 'bg-white text-slate-charcoal shadow-xs'
-                  : 'text-slate-muted hover:text-slate-charcoal'
-              }`}
+              className="flex-1 py-2 px-3 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer relative z-10 transition-colors"
             >
-              <User className={`w-3.5 h-3.5 ${role === 'customer' ? 'text-primary' : 'text-slate-subtle'}`} />
-              <span>Customer</span>
+              {role === 'customer' && (
+                <motion.div
+                  layoutId="activeSignupRoleTab"
+                  className="absolute inset-0 bg-white rounded-lg shadow-xs -z-10"
+                  transition={
+                    shouldReduceMotion
+                      ? { duration: 0 }
+                      : { type: 'spring', stiffness: 500, damping: 35 }
+                  }
+                />
+              )}
+              <User
+                className={`w-3.5 h-3.5 transition-colors ${
+                  role === 'customer' ? 'text-primary' : 'text-slate-subtle'
+                }`}
+              />
+              <span
+                className={
+                  role === 'customer'
+                    ? 'text-slate-charcoal font-bold'
+                    : 'text-slate-muted'
+                }
+              >
+                Customer
+              </span>
             </button>
             <button
               type="button"
               onClick={() => setRole('pharmacy')}
-              className={`flex-1 py-2 px-3 rounded-lg text-xs font-semibold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
-                role === 'pharmacy'
-                  ? 'bg-white text-slate-charcoal shadow-xs'
-                  : 'text-slate-muted hover:text-slate-charcoal'
-              }`}
+              className="flex-1 py-2 px-3 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer relative z-10 transition-colors"
             >
-              <Store className={`w-3.5 h-3.5 ${role === 'pharmacy' ? 'text-primary' : 'text-slate-subtle'}`} />
-              <span>Pharmacy Owner</span>
+              {role === 'pharmacy' && (
+                <motion.div
+                  layoutId="activeSignupRoleTab"
+                  className="absolute inset-0 bg-white rounded-lg shadow-xs -z-10"
+                  transition={
+                    shouldReduceMotion
+                      ? { duration: 0 }
+                      : { type: 'spring', stiffness: 500, damping: 35 }
+                  }
+                />
+              )}
+              <Store
+                className={`w-3.5 h-3.5 transition-colors ${
+                  role === 'pharmacy' ? 'text-primary' : 'text-slate-subtle'
+                }`}
+              />
+              <span
+                className={
+                  role === 'pharmacy'
+                    ? 'text-slate-charcoal font-bold'
+                    : 'text-slate-muted'
+                }
+              >
+                Pharmacy Owner
+              </span>
             </button>
           </div>
 
@@ -206,6 +278,14 @@ export const SignupPage: React.FC = () => {
                 </span>
               </div>
             </>
+          )}
+
+          {/* Error Alert Box */}
+          {(formError || authError) && (
+            <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+              <span className="font-medium">{formError || authError}</span>
+            </div>
           )}
 
           {/* Form */}
@@ -705,18 +785,19 @@ export const SignupPage: React.FC = () => {
               </div>
             )}
 
-            {/* Submit Button */}
-            <button
+            {/* Animated Animate UI Button */}
+            <Button
               type="submit"
-              className="w-full h-11 bg-primary hover:bg-primary-hover active:scale-[0.99] text-white font-semibold text-sm rounded-lg shadow-xs transition-all flex items-center justify-center gap-2 cursor-pointer group mt-2"
+              variant="primary"
+              size="lg"
+              isLoading={loading}
+              rightIcon={<ArrowRight className="w-4 h-4 transition-transform group-hover:translate-x-1" />}
+              className="w-full h-11 active:scale-[0.99] transition-all group mt-2"
             >
-              <span>
-                {role === 'customer'
-                  ? 'Create Free Account'
-                  : 'Register Pharmacy Dispensary'}
-              </span>
-              <ArrowRight className="w-4 h-4 transition-transform group-hover:translate-x-1" />
-            </button>
+              {role === 'customer'
+                ? 'Create Free Account'
+                : 'Register Pharmacy Dispensary'}
+            </Button>
           </form>
 
           {/* Bottom Footnote Redirect */}
@@ -728,7 +809,7 @@ export const SignupPage: React.FC = () => {
               </Link>
             </p>
           </div>
-        </div>
+        </motion.div>
       </main>
 
       {/* Footer */}
